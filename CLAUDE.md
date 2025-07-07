@@ -54,14 +54,28 @@ FunDSP features a powerful inline graph notation for describing audio processing
 
 ### Core Operators
 
-| Operator | Meaning | Example |
-|----------|---------|---------|
-| `>>` | Pipe (serial chain) | `A >> B` - output of A feeds input of B |
-| `&` | Bus (parallel mix) | `A & B` - same input to both, outputs mixed |
-| `^` | Branch (parallel split) | `A ^ B` - same input to both, separate outputs |
-| `\|` | Stack (independent) | `A \| B` - independent parallel processing |
-| `*` | Multiply/amplify | `A * 0.5` - amplify by 0.5 |
-| `+` | Add/mix | `A + B` - mix signals together |
+Operators in order of precedence (highest to lowest):
+
+| Operator | Meaning | Example | Notes |
+|----------|---------|---------|-------|
+| `-A` | Negate | `-noise()` - inverted noise | Equivalent to `0.0 - A` |
+| `!A` | Thru | `!lowpass() >> lowpass()` | Passes through missing outputs for chaining |
+| `A * B` | Multiply/Ring mod | `sine() * noise()` | Ring modulation when both are audio |
+| `A * constant` | Amplify | `A * 0.5` | Broadcasts constant to all channels |
+| `A + B` | Add/Mix | `A + B` - mix signals | Outputs must match |
+| `A + constant` | Add offset | `A + 0.1` | Broadcasts constant to all channels |
+| `A - B` | Subtract | `A - B` - subtract B from A | Outputs must match |
+| `A - constant` | Subtract offset | `A - 0.1` | Broadcasts constant to all channels |
+| `A >> B` | Pipe (serial) | `A >> B` | Output of A → input of B |
+| `A & B` | Bus (parallel mix) | `A & B` | Same input to both, outputs mixed |
+| `A ^ B` | Branch (parallel split) | `A ^ B` | Same input to both, separate outputs |
+| `A \| B` | Stack (independent) | `A \| B` | Independent parallel processing |
+
+### Broadcasting Rules
+
+- Arithmetic with constants broadcasts to any number of channels
+- Arithmetic between components requires matching channel counts
+- Example: `A * 2.0` works with any A, but `A * B` requires same output count
 
 ### Example Expressions
 
