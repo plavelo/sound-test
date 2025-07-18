@@ -129,3 +129,71 @@ noise() >> (lowpass_hz(1000.0, 1.0) & bandpass_hz(2000.0, 2.0) & highpass_hz(400
 - Use `set_sample_rate(rate)` to change sample rate for component and children
 - Parameters use natural units (Hz for frequency, seconds for time)
 - Enables easy oversampling with `oversample()` component
+
+## Input Modalities And Ranges
+
+Standard parameter ranges for FunDSP components:
+
+| Parameter Type | Range/Units | Notes |
+|---------------|-------------|-------|
+| frequency | Hz | Natural frequency units |
+| phase | 0...1 | All oscillators use this normalized range |
+| time | seconds | Natural time units |
+| audio data | -1...1 | Standard audio range (internal processing may exceed) |
+| stereo pan | -1...1 | Left to right positioning |
+| pulse width | 0...1 | For pulse wave oscillators |
+| control amount | 0...1 | Generic control parameter range |
+
+## Deterministic Pseudorandom Phase
+
+FunDSP uses a deterministic pseudorandom phase system for audio generators:
+
+- Generator phases are seeded from network structure and node location
+- Identical networks sound the same separately but different when combined
+- `noise() | noise()` creates stereo noise (different phases per channel)
+- Helps decorrelate channels and adds "warmth" to envelopes
+
+### Customizing Phase
+
+**Noise components** (white, pink, brown, mls):
+```rust
+noise().seed(42)  // Custom seed for noise
+```
+
+**Oscillators**:
+```rust
+sine_hz(440.0).phase(0.0)  // Start at zero phase
+```
+
+**Runtime phase changes**:
+```rust
+oscillator.set(Setting::phase(0.5));  // Takes effect on next reset
+```
+
+## Builder Methods
+
+FunDSP components support builder pattern methods for customization:
+
+- `.seed(value)` - Set pseudorandom seed for noise generators
+- `.phase(value)` - Set initial phase (0...1) for oscillators  
+- `.interval(seconds)` - Set sampling interval for envelope functions
+
+Example:
+```rust
+envelope(|t| exp(-t)).interval(0.01)  // Sample every 10ms
+```
+
+## Waveshaping Modes
+
+The `shape(mode)` opcode applies waveshaping distortion. Available modes:
+
+- `Tanh(hardness)` - Hyperbolic tangent distortion
+- `Atan(hardness)` - Arctangent distortion  
+- `Softsign(hardness)` - Polynomial alternative to tanh
+- `Clip(hardness)` - Hard clipping distortion
+- `ClipTo(min, max)` - Clip to custom range
+- `Crush(levels)` - Bit crushing effect
+- `SoftCrush(levels)` - Smooth bit crushing
+- `Adaptive::new(timescale, inner)` - Adaptive normalizing distortion
+
+All shapes with hardness parameter have slope of 1 at origin when hardness = 1.
