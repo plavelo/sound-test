@@ -14,7 +14,7 @@ static A: AllocDisabler = AllocDisabler;
 
 #[derive(Parser)]
 #[command(name = "sound-test")]
-#[command(about = "A Rust audio synthesis program that generates organ sounds")]
+#[command(about = "A Rust audio synthesis program that generates acoustic guitar sounds")]
 struct Args {
     #[arg(short = 'o', long = "output", help = "Output WAV file path")]
     output: Option<String>,
@@ -43,7 +43,7 @@ fn main() {
     }
 }
 
-fn organ_table() -> Arc<Wavetable> {
+fn guitar_table() -> Arc<Wavetable> {
     static INSTANCE: OnceBox<Arc<Wavetable>> = OnceBox::new();
     INSTANCE
         .get_or_init(|| {
@@ -61,10 +61,17 @@ fn organ_table() -> Arc<Wavetable> {
                         0.5
                     }
                 },
+                // Guitar-like harmonic series with decay
                 &|_, i| {
-                    let z = i.trailing_zeros();
-                    let j = i >> z;
-                    1.0 / (i + j * j * j) as f64
+                    let decay = (-0.3 * i as f64).exp();
+                    let amplitude = if i % 2 == 1 {
+                        // Odd harmonics are stronger for guitar-like sound
+                        1.0 / (i as f64).sqrt()
+                    } else {
+                        // Even harmonics are weaker
+                        0.5 / (i as f64).sqrt()
+                    };
+                    amplitude * decay
                 },
             );
             Box::new(Arc::new(table))
@@ -72,18 +79,19 @@ fn organ_table() -> Arc<Wavetable> {
         .clone()
 }
 
-fn organ() -> An<WaveSynth<U1>> {
-    An(WaveSynth::new(organ_table()))
+fn guitar() -> An<WaveSynth<U1>> {
+    An(WaveSynth::new(guitar_table()))
 }
 
-fn organ_hz(f: f32) -> An<Pipe<Constant<U1>, WaveSynth<U1>>> {
-    constant(f) >> organ()
+fn guitar_hz(f: f32) -> An<Pipe<Constant<U1>, WaveSynth<U1>>> {
+    constant(f) >> guitar()
 }
 
 fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
-    let c = 0.2 * organ_hz(midi_hz(57.0)); // A3 single note
+    let c = 0.3 * guitar_hz(midi_hz(57.0)); // A3 single note
     let c = c >> pan(0.0);
-    let c = c >> (chorus(0, 0.0, 0.01, 0.2) | chorus(1, 0.0, 0.01, 0.2));
+    // Add reverb for more natural guitar sound
+    let c = c >> reverb_stereo(4.0, 3.0, 0.5);
     c >> (declick() | declick()) >> (dcblock() | dcblock()) >> limiter_stereo(1.0, 5.0)
 }
 
