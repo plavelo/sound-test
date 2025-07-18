@@ -1,6 +1,7 @@
 #![allow(clippy::precedence)]
 
 use assert_no_alloc::*;
+use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use fundsp::hacker::*;
@@ -11,7 +12,22 @@ use std::sync::Arc;
 #[global_allocator]
 static A: AllocDisabler = AllocDisabler;
 
+#[derive(Parser)]
+#[command(name = "sound-test")]
+#[command(about = "A Rust audio synthesis program that generates organ sounds")]
+struct Args {
+    #[arg(short = 'o', long = "output", help = "Output WAV file path")]
+    output: Option<String>,
+}
+
 fn main() {
+    let args = Args::parse();
+    
+    if let Some(output_file) = args.output {
+        save_to_wav(&output_file);
+        return;
+    }
+    
     let host = cpal::default_host();
 
     let device = host
@@ -64,6 +80,26 @@ fn organ_hz(f: f32) -> An<Pipe<Constant<U1>, WaveSynth<U1>>> {
     constant(f) >> organ()
 }
 
+fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
+    let c = 0.2 * (organ_hz(midi_hz(57.0)) + organ_hz(midi_hz(61.0)) + organ_hz(midi_hz(64.0)));
+    let c = c >> pan(0.0);
+    let c = c >> (chorus(0, 0.0, 0.01, 0.2) | chorus(1, 0.0, 0.01, 0.2));
+    c >> (declick() | declick()) >> (dcblock() | dcblock()) >> limiter_stereo(1.0, 5.0)
+}
+
+fn save_to_wav(filename: &str) {
+    let sample_rate = 44100.0;
+    let duration = 50.0;
+    
+    let mut c = create_audio_graph();
+    
+    let wave = Wave::render(sample_rate, duration, &mut c);
+    let path = std::path::Path::new(filename);
+    wave.save_wav32(path).expect(&format!("Could not save {}", filename));
+    
+    println!("Saved audio to {}", filename);
+}
+
 fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
 where
     T: SizedSample + FromSample<f32>,
@@ -71,14 +107,7 @@ where
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;
 
-    let c = 0.2 * (organ_hz(midi_hz(57.0)) + organ_hz(midi_hz(61.0)) + organ_hz(midi_hz(64.0)));
-
-    let c = c >> pan(0.0);
-
-    // Add chorus.
-    let c = c >> (chorus(0, 0.0, 0.01, 0.2) | chorus(1, 0.0, 0.01, 0.2));
-
-    let mut c = c >> (declick() | declick()) >> (dcblock() | dcblock()) >> limiter_stereo(1.0, 5.0);
+    let mut c = create_audio_graph();
 
     c.set_sample_rate(sample_rate);
     c.allocate();
