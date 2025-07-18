@@ -65,85 +65,86 @@ fn acoustic_guitar_hz(freq: f32) -> An<impl AudioNode<Inputs = U0, Outputs = U1>
         >> dcblock() // Remove DC offset
 }
 
-// Create a single guitar note with timing control
+// Create a single guitar note with timing control - simpler approach
 fn guitar_note_timed(
     freq: f32,
     start_time: f64,
-    duration: f64,
+    _duration: f64,
 ) -> An<impl AudioNode<Inputs = U0, Outputs = U1>> {
-    let guitar = acoustic_guitar_hz(freq)
-        * envelope(move |t| {
-            if t >= start_time && t < start_time + duration {
-                1.0
-            } else {
-                0.0
-            }
-        });
+    // Generate a full guitar note with gating envelope
+    let note = acoustic_guitar_hz(freq);
 
-    guitar * 0.5
+    // Gate the note to start at the specified time
+    note * envelope(move |t| {
+        if t >= start_time && t < start_time + 0.01 {
+            // Trigger impulse at note start
+            1.0
+        } else {
+            // Let the guitar's natural decay take over
+            0.0
+        }
+    }) * 0.8 // Increase volume to make all notes audible
 }
 
-fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
+fn create_audio_graph() -> Net {
+    // Use Net for dynamic sequencing
+    let mut net = Net::new(0, 2);
+
     // BPM 120 = 0.5 seconds per quarter note
     let note_duration = 0.5;
 
     // C major scale starting from C4 (MIDI note 60)
-    let c_major_scale = [
-        60.0, // C4
-        62.0, // D4
-        64.0, // E4
-        65.0, // F4
-        67.0, // G4
-        69.0, // A4
-        71.0, // B4
-        72.0, // C5
-    ];
+    let c_major_scale = [60.0, 62.0, 64.0, 65.0, 67.0, 69.0, 71.0, 72.0];
 
-    // Create sequence of notes
-    let scale_sequence = guitar_note_timed(midi_hz(c_major_scale[0]), 0.0, note_duration)
-        + guitar_note_timed(midi_hz(c_major_scale[1]), note_duration, note_duration)
-        + guitar_note_timed(
-            midi_hz(c_major_scale[2]),
-            note_duration * 2.0,
-            note_duration,
-        )
-        + guitar_note_timed(
-            midi_hz(c_major_scale[3]),
-            note_duration * 3.0,
-            note_duration,
-        )
-        + guitar_note_timed(
-            midi_hz(c_major_scale[4]),
-            note_duration * 4.0,
-            note_duration,
-        )
-        + guitar_note_timed(
-            midi_hz(c_major_scale[5]),
-            note_duration * 5.0,
-            note_duration,
-        )
-        + guitar_note_timed(
-            midi_hz(c_major_scale[6]),
-            note_duration * 6.0,
-            note_duration,
-        )
-        + guitar_note_timed(
-            midi_hz(c_major_scale[7]),
-            note_duration * 7.0,
-            note_duration,
+    // Create a sequencer to play notes one by one
+    let mut sequencer = Sequencer::new(false, 2);
+
+    // Add each note to the sequencer with proper timing
+    for (i, &midi_note) in c_major_scale.iter().enumerate() {
+        let start_time = i as f64 * note_duration;
+        let end_time = start_time + note_duration + 1.0; // Extra time for natural decay
+
+        // Create individual guitar note using white noise excitation
+        let guitar_note = white()
+            * envelope(|t| if t < 0.01 { 1.0 } else { 0.0 })
+            >> pluck(midi_hz(midi_note), 0.996, 0.3)
+            >> (pass() &
+                bandpass_hz(110.0, 1.5) * 0.15 &  // Low body resonance
+                bandpass_hz(200.0, 2.0) * 0.25 &  // Primary body resonance
+                bandpass_hz(400.0, 2.5) * 0.2 &   // Mid body resonance
+                bandpass_hz(800.0, 3.0) * 0.1)    // High frequency brightness
+            >> lowpass_hz(6000.0, 1.0)
+            >> dcblock()
+            * 0.7
+            >> pan(0.0);
+
+        // Add to sequencer - each note plays sequentially
+        sequencer.push(
+            start_time,
+            end_time,
+            Fade::Smooth,
+            0.01, // 10ms fade in
+            0.1,  // 100ms fade out
+            Box::new(guitar_note),
         );
+    }
 
-    // Convert to stereo
-    let stereo_scale = scale_sequence >> pan(0.0);
+    // Convert sequencer to net
+    let sequencer_id = net.push(Box::new(sequencer));
 
-    // Add subtle chorus for natural string detuning and width
-    let with_chorus = stereo_scale >> (chorus(0, 0.0, 0.002, 0.1) | chorus(1, 0.0, 0.002, 0.1));
+    // Add final effects
+    let chorus_id = net.push(Box::new(
+        chorus(0, 0.0, 0.002, 0.1) | chorus(1, 0.0, 0.002, 0.1),
+    ));
+    let reverb_id = net.push(Box::new(reverb_stereo(3.0, 2.5, 0.4)));
+    let limiter_id = net.push(Box::new(limiter_stereo(0.9, 2.0)));
 
-    // Add acoustic space with reverb
-    let with_reverb = with_chorus >> reverb_stereo(3.0, 2.5, 0.4);
+    net.pipe_all(sequencer_id, chorus_id);
+    net.pipe_all(chorus_id, reverb_id);
+    net.pipe_all(reverb_id, limiter_id);
+    net.pipe_output(limiter_id);
 
-    // Final processing chain
-    with_reverb >> (declick() | declick()) >> limiter_stereo(0.9, 2.0)
+    net
 }
 
 fn save_to_wav(filename: &str) {
