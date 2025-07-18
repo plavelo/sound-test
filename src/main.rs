@@ -81,7 +81,7 @@ fn organ_hz(f: f32) -> An<Pipe<Constant<U1>, WaveSynth<U1>>> {
 }
 
 fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
-    let c = 0.2 * (organ_hz(midi_hz(57.0)) + organ_hz(midi_hz(61.0)) + organ_hz(midi_hz(64.0)));
+    let c = 0.2 * organ_hz(midi_hz(57.0)); // A3 single note
     let c = c >> pan(0.0);
     let c = c >> (chorus(0, 0.0, 0.01, 0.2) | chorus(1, 0.0, 0.01, 0.2));
     c >> (declick() | declick()) >> (dcblock() | dcblock()) >> limiter_stereo(1.0, 5.0)
@@ -89,7 +89,7 @@ fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
 
 fn save_to_wav(filename: &str) {
     let sample_rate = 44100.0;
-    let duration = 50.0;
+    let duration = 10.0;
     
     let mut c = create_audio_graph();
     
@@ -126,7 +126,7 @@ where
     )?;
     stream.play()?;
 
-    std::thread::sleep(std::time::Duration::from_millis(50000));
+    std::thread::sleep(std::time::Duration::from_millis(10000));
 
     Ok(())
 }
