@@ -65,15 +65,79 @@ fn acoustic_guitar_hz(freq: f32) -> An<impl AudioNode<Inputs = U0, Outputs = U1>
         >> dcblock() // Remove DC offset
 }
 
-fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
-    // Generate realistic acoustic guitar note (A3 - 220 Hz)
-    let guitar_note = 0.5 * acoustic_guitar_hz(midi_hz(57.0));
+// Create a single guitar note with timing control
+fn guitar_note_timed(
+    freq: f32,
+    start_time: f64,
+    duration: f64,
+) -> An<impl AudioNode<Inputs = U0, Outputs = U1>> {
+    let guitar = acoustic_guitar_hz(freq)
+        * envelope(move |t| {
+            if t >= start_time && t < start_time + duration {
+                1.0
+            } else {
+                0.0
+            }
+        });
 
-    // Convert to stereo with slight panning
-    let stereo_guitar = guitar_note >> pan(0.0);
+    guitar * 0.5
+}
+
+fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
+    // BPM 120 = 0.5 seconds per quarter note
+    let note_duration = 0.5;
+
+    // C major scale starting from C4 (MIDI note 60)
+    let c_major_scale = [
+        60.0, // C4
+        62.0, // D4
+        64.0, // E4
+        65.0, // F4
+        67.0, // G4
+        69.0, // A4
+        71.0, // B4
+        72.0, // C5
+    ];
+
+    // Create sequence of notes
+    let scale_sequence = guitar_note_timed(midi_hz(c_major_scale[0]), 0.0, note_duration)
+        + guitar_note_timed(midi_hz(c_major_scale[1]), note_duration, note_duration)
+        + guitar_note_timed(
+            midi_hz(c_major_scale[2]),
+            note_duration * 2.0,
+            note_duration,
+        )
+        + guitar_note_timed(
+            midi_hz(c_major_scale[3]),
+            note_duration * 3.0,
+            note_duration,
+        )
+        + guitar_note_timed(
+            midi_hz(c_major_scale[4]),
+            note_duration * 4.0,
+            note_duration,
+        )
+        + guitar_note_timed(
+            midi_hz(c_major_scale[5]),
+            note_duration * 5.0,
+            note_duration,
+        )
+        + guitar_note_timed(
+            midi_hz(c_major_scale[6]),
+            note_duration * 6.0,
+            note_duration,
+        )
+        + guitar_note_timed(
+            midi_hz(c_major_scale[7]),
+            note_duration * 7.0,
+            note_duration,
+        );
+
+    // Convert to stereo
+    let stereo_scale = scale_sequence >> pan(0.0);
 
     // Add subtle chorus for natural string detuning and width
-    let with_chorus = stereo_guitar >> (chorus(0, 0.0, 0.002, 0.1) | chorus(1, 0.0, 0.002, 0.1));
+    let with_chorus = stereo_scale >> (chorus(0, 0.0, 0.002, 0.1) | chorus(1, 0.0, 0.002, 0.1));
 
     // Add acoustic space with reverb
     let with_reverb = with_chorus >> reverb_stereo(3.0, 2.5, 0.4);
@@ -84,7 +148,8 @@ fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
 
 fn save_to_wav(filename: &str) {
     let sample_rate = 44100.0;
-    let duration = 10.0;
+    // Duration for 8 quarter notes at BPM 120 = 8 * 0.5 = 4 seconds + some extra for decay
+    let duration = 6.0;
 
     let mut c = create_audio_graph();
 
@@ -93,7 +158,7 @@ fn save_to_wav(filename: &str) {
     wave.save_wav32(path)
         .expect(&format!("Could not save {}", filename));
 
-    println!("Saved audio to {}", filename);
+    println!("Saved C major scale to {}", filename);
 }
 
 fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
@@ -122,7 +187,8 @@ where
     )?;
     stream.play()?;
 
-    std::thread::sleep(std::time::Duration::from_millis(10000));
+    // Play for 6 seconds to hear the complete C major scale
+    std::thread::sleep(std::time::Duration::from_millis(6000));
 
     Ok(())
 }
