@@ -5,8 +5,6 @@ use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use fundsp::hacker::*;
-use once_cell::race::OnceBox;
-use std::sync::Arc;
 
 #[cfg(debug_assertions)] // required when disable_release is set (default)
 #[global_allocator]
@@ -22,12 +20,12 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    
+
     if let Some(output_file) = args.output {
         save_to_wav(&output_file);
         return;
     }
-    
+
     let host = cpal::default_host();
 
     let device = host
@@ -43,68 +41,58 @@ fn main() {
     }
 }
 
-fn guitar_table() -> Arc<Wavetable> {
-    static INSTANCE: OnceBox<Arc<Wavetable>> = OnceBox::new();
-    INSTANCE
-        .get_or_init(|| {
-            let table = Wavetable::new(
-                20.0,
-                20_000.0,
-                4.0,
-                // Set phase to enable interpolation with saw, triangle and soft saw wavetables.
-                &|i| {
-                    if (i & 3) == 3 {
-                        0.5
-                    } else if (i & 1) == 1 {
-                        0.0
-                    } else {
-                        0.5
-                    }
-                },
-                // Guitar-like harmonic series with decay
-                &|_, i| {
-                    let decay = (-0.3 * i as f64).exp();
-                    let amplitude = if i % 2 == 1 {
-                        // Odd harmonics are stronger for guitar-like sound
-                        1.0 / (i as f64).sqrt()
-                    } else {
-                        // Even harmonics are weaker
-                        0.5 / (i as f64).sqrt()
-                    };
-                    amplitude * decay
-                },
-            );
-            Box::new(Arc::new(table))
-        })
-        .clone()
-}
+// Karplus-Strong acoustic guitar synthesis
+fn acoustic_guitar_hz(freq: f32) -> An<impl AudioNode<Inputs = U0, Outputs = U1>> {
+    // Generate excitation pulse with noise
+    let excitation = white() * envelope(|t| if t < 0.002 { 1.0 } else { 0.0 });
 
-fn guitar() -> An<WaveSynth<U1>> {
-    An(WaveSynth::new(guitar_table()))
-}
+    // Karplus-Strong plucked string synthesis
+    // Parameters: frequency, gain per second (decay), high frequency damping
+    let plucked_string = excitation >> pluck(freq, 0.996, 0.3);
 
-fn guitar_hz(f: f32) -> An<Pipe<Constant<U1>, WaveSynth<U1>>> {
-    constant(f) >> guitar()
+    // Add body resonance with bandpass filters for acoustic guitar character
+    let body_resonance = plucked_string
+        >> (pass() &
+        bandpass_hz(110.0, 1.5) * 0.15 &  // Low body resonance
+        bandpass_hz(200.0, 2.0) * 0.25 &  // Primary body resonance
+        bandpass_hz(400.0, 2.5) * 0.2 &   // Mid body resonance
+        bandpass_hz(800.0, 3.0) * 0.1); // High frequency brightness
+
+    // Apply natural guitar envelope and final filtering
+    body_resonance
+        * envelope(|t| (-t * 1.5).exp()) // Natural decay envelope
+        >> lowpass_hz(6000.0, 1.0)      // Remove harsh high frequencies
+        >> dcblock() // Remove DC offset
 }
 
 fn create_audio_graph() -> An<impl AudioNode<Inputs = U0, Outputs = U2>> {
-    let c = 0.3 * guitar_hz(midi_hz(57.0)); // A3 single note
-    let c = c >> pan(0.0);
-    // Add reverb for more natural guitar sound
-    let c = c >> reverb_stereo(4.0, 3.0, 0.5);
-    c >> (declick() | declick()) >> (dcblock() | dcblock()) >> limiter_stereo(1.0, 5.0)
+    // Generate realistic acoustic guitar note (A3 - 220 Hz)
+    let guitar_note = 0.5 * acoustic_guitar_hz(midi_hz(57.0));
+
+    // Convert to stereo with slight panning
+    let stereo_guitar = guitar_note >> pan(0.0);
+
+    // Add subtle chorus for natural string detuning and width
+    let with_chorus = stereo_guitar >> (chorus(0, 0.0, 0.002, 0.1) | chorus(1, 0.0, 0.002, 0.1));
+
+    // Add acoustic space with reverb
+    let with_reverb = with_chorus >> reverb_stereo(3.0, 2.5, 0.4);
+
+    // Final processing chain
+    with_reverb >> (declick() | declick()) >> limiter_stereo(0.9, 2.0)
 }
 
 fn save_to_wav(filename: &str) {
     let sample_rate = 44100.0;
     let duration = 10.0;
-    
+
     let mut c = create_audio_graph();
-    
+
     let wave = Wave::render(sample_rate, duration, &mut c);
     let path = std::path::Path::new(filename);
-    wave.save_wav32(path).expect(&format!("Could not save {}", filename));
-    
+    wave.save_wav32(path)
+        .expect(&format!("Could not save {}", filename));
+
     println!("Saved audio to {}", filename);
 }
 
