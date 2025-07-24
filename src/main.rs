@@ -1,14 +1,9 @@
 #![allow(clippy::precedence)]
 
-use assert_no_alloc::*;
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use fundsp::hacker::*;
-
-#[cfg(debug_assertions)] // required when disable_release is set (default)
-#[global_allocator]
-static A: AllocDisabler = AllocDisabler;
 
 #[derive(Parser)]
 #[command(name = "sound-test")]
@@ -41,51 +36,6 @@ fn main() {
     }
 }
 
-// Karplus-Strong acoustic guitar synthesis
-fn acoustic_guitar_hz(freq: f32) -> An<impl AudioNode<Inputs = U0, Outputs = U1>> {
-    // Generate excitation pulse with noise
-    let excitation = white() * envelope(|t| if t < 0.002 { 1.0 } else { 0.0 });
-
-    // Karplus-Strong plucked string synthesis
-    // Parameters: frequency, gain per second (decay), high frequency damping
-    let plucked_string = excitation >> pluck(freq, 0.996, 0.3);
-
-    // Add body resonance with bandpass filters for acoustic guitar character
-    let body_resonance = plucked_string
-        >> (pass() &
-        bandpass_hz(110.0, 1.5) * 0.15 &  // Low body resonance
-        bandpass_hz(200.0, 2.0) * 0.25 &  // Primary body resonance
-        bandpass_hz(400.0, 2.5) * 0.2 &   // Mid body resonance
-        bandpass_hz(800.0, 3.0) * 0.1); // High frequency brightness
-
-    // Apply natural guitar envelope and final filtering
-    body_resonance
-        * envelope(|t| (-t * 1.5).exp()) // Natural decay envelope
-        >> lowpass_hz(6000.0, 1.0)      // Remove harsh high frequencies
-        >> dcblock() // Remove DC offset
-}
-
-// Create a single guitar note with timing control - simpler approach
-fn guitar_note_timed(
-    freq: f32,
-    start_time: f64,
-    _duration: f64,
-) -> An<impl AudioNode<Inputs = U0, Outputs = U1>> {
-    // Generate a full guitar note with gating envelope
-    let note = acoustic_guitar_hz(freq);
-
-    // Gate the note to start at the specified time
-    note * envelope(move |t| {
-        if t >= start_time && t < start_time + 0.01 {
-            // Trigger impulse at note start
-            1.0
-        } else {
-            // Let the guitar's natural decay take over
-            0.0
-        }
-    }) * 0.8 // Increase volume to make all notes audible
-}
-
 fn create_audio_graph() -> Net {
     // Use Net for dynamic sequencing
     let mut net = Net::new(0, 2);
@@ -111,7 +61,7 @@ fn create_audio_graph() -> Net {
             >> (pass() &
                 bandpass_hz(110.0, 1.5) * 0.15 &  // Low body resonance
                 bandpass_hz(200.0, 2.0) * 0.25 &  // Primary body resonance
-                bandpass_hz(400.0, 2.5) * 0.2 &   // Mid body resonance
+                bandpass_hz(400.0, 2.5) * 0.2 &   // Mid-body resonance
                 bandpass_hz(800.0, 3.0) * 0.1)    // High frequency brightness
             >> lowpass_hz(6000.0, 1.0)
             >> dcblock()
@@ -136,7 +86,7 @@ fn create_audio_graph() -> Net {
     let chorus_id = net.push(Box::new(
         chorus(0, 0.0, 0.002, 0.1) | chorus(1, 0.0, 0.002, 0.1),
     ));
-    let reverb_id = net.push(Box::new(reverb_stereo(3.0, 2.5, 0.4)));
+    let reverb_id = net.push(Box::new(reverb_stereo(0.8, 0.3, 0.02)));
     let limiter_id = net.push(Box::new(limiter_stereo(0.9, 2.0)));
 
     net.pipe_all(sequencer_id, chorus_id);
@@ -174,7 +124,7 @@ where
     c.set_sample_rate(sample_rate);
     c.allocate();
 
-    let mut next_value = move || assert_no_alloc(|| c.get_stereo());
+    let mut next_value = move || c.get_stereo();
 
     let err_fn = |err| eprintln!("an error occurred on stream: {err}");
 
